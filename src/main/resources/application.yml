@@ -1,0 +1,35 @@
+spring:
+  application:
+    name: CGICUPDAWebservice
+  data:
+    mongodb:
+      smartcare:
+        uri: mongodb://dxm:DB%40dmin@10.35.4.11:32121/SmartCare
+      datacenter:
+        uri: mongodb://data:Data%40dmin@10.35.4.11:32121/DataCenter
+      auto-index-creation: true
+  datasource:
+    url: jdbc:kingbase8://10.35.4.102:54321/ewell?currentSchema=np_nis_cqchonggang
+    username: YDCF
+    password: YDCF@123!
+    driver-class-name: com.kingbase8.Driver
+    # --- 新增部分开始 ---
+  jpa:
+    hibernate:
+      ddl-auto: update # 或者 none, validate，根据你的需求设定
+    show-sql: true
+    properties:
+      hibernate:
+        # 核心修复：指定人大金仓的方言
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: true
+    # --- 新增部分结束 ---
+server:
+  port: 8082
+digixmed:
+  #字典请求频率（同步医嘱执行记录）
+  dicti-corn: 0 0/10 * * * ?
+  #是否开启定时同步（开启后按上面的 cron 把医嘱执行记录同步到 DataCenter）
+  isTask: true
+  #同步回看窗口（小时）：每次只同步 record_time 在最近 N 小时内的记录
+  order-execute-lookback-hours: 24

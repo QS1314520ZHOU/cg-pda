@@ -102,6 +102,11 @@
     </dependencies>
     <build>
         <plugins>
+            <!-- 打成可直接 java -jar 启动的 fat jar（内含全部依赖），repackage 目标由 spring-boot-starter-parent 绑定 -->
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+            </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-jar-plugin</artifactId>

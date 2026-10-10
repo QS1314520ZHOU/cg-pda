@@ -58,5 +58,13 @@ public class IcuRecordView {
     @Column(name = "zyh")
     private String zyh;
 
+    /** HIS 视图新增列：给药途径编码（供药码），用于匹配 configDrugMethod */
+    @Column(name = "supply_code")
+    private String supplyCode;
+
+    /** HIS 视图新增列：给药途径名称 */
+    @Column(name = "supply_name")
+    private String supplyName;
+
     // Getters and Setters ...
 }

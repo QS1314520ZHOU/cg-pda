@@ -222,6 +222,15 @@ public class MongoDao {
     }
 
     /**
+     * 查询 SmartCare 给药方法配置 configDrugMethod 中所有有效记录
+     * code 字段可能含多个编码，以中文顿号 、 分隔（如 "103、104、105"）
+     * 集合很小，每次同步全量加载一次即可，无需缓存
+     */
+    public List<Document> findValidDrugMethods() {
+        return this.smongoTemplate.find(Query.query(Criteria.where("valid").is(true)), Document.class, "configDrugMethod");
+    }
+
+    /**
      * 按 exeId 把医嘱执行记录写入 DataCenter.VI_ICU_HSZ_YYZXJL（原始 Document，保留对端 _class）
      * 只 $set 传入的字段，不覆盖对端系统可能写入的其它字段
      * 幂等：同一 exeId 多次调用只会更新同一条文档，不会重复插入

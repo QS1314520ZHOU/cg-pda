@@ -29,8 +29,9 @@ public class ICUHanderController {
     @ApiOperation("同步医嘱执行记录（最近N小时）到DataCenter.VI_ICU_HSZ_YYZXJL，按 exeId upsert：没有新增，有则修改")
     public String synOrderExecute() {
         Map<String, Integer> result = this.orderService.synOrderExecute();
-        return "同步完成：扫描 " + result.get("scan") + " 条，过滤后 " + result.get("filtered")
-                + " 条，新增 " + result.get("insert") + " 条，更新 " + result.get("update")
+        return "同步完成：扫描 " + result.get("scan") + " 条，状态过滤后 " + result.get("filtered")
+                + " 条，去重剔除 " + result.get("dedup") + " 条（整组跳过 " + result.get("skippedGroups")
+                + " 组），新增 " + result.get("insert") + " 条，更新 " + result.get("update")
                 + " 条（按 exeId upsert：没有新增，有则修改）";
     }
 

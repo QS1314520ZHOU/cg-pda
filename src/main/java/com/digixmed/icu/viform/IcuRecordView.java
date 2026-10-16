@@ -14,9 +14,7 @@ public class IcuRecordView {
     @Column(name = "exeid")
     private String exeid;
 
-    @Column(name = "orderid")
-    private String orderId;
-
+    // 视图 2026-10 变更后已无 orderid/amount/amountunit 列，删除对应映射（orderID 业务上取 groupid）
     @Column(name = "barcode")
     private String barcode;
 
@@ -48,12 +46,6 @@ public class IcuRecordView {
 
     @Column(name = "nurseuserid")
     private String nurseUserId;
-
-    @Column(name = "amount")
-    private Double amount;
-
-    @Column(name = "amountunit")
-    private String amountUnit;
 
     @Column(name = "zyh")
     private String zyh;

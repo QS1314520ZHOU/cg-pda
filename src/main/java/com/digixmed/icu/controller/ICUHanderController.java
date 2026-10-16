@@ -6,6 +6,7 @@ import io.swagger.annotations.ApiOperation;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
@@ -23,6 +24,19 @@ public class ICUHanderController {
     public String test() {
         List<IcuRecordView> recordsAll = orderService.getRecordsAll();
         return recordsAll.toString();
+    }
+
+    @GetMapping({"/records/recent"})
+    @ApiOperation("测试获取最近N小时的视图数据（record_time >= 当前时间-N小时），默认24小时")
+    public List<IcuRecordView> recentRecords(@RequestParam(name = "hours", defaultValue = "24") Integer hours) {
+        int h = (hours == null || hours <= 0) ? 24 : hours;
+        return orderService.getRecordsRecentHours(h);
+    }
+
+    @GetMapping({"/records/all"})
+    @ApiOperation("测试获取视图全量数据")
+    public List<IcuRecordView> allRecords() {
+        return orderService.getRecordsAll();
     }
 
     @GetMapping({"/synOrderExecute"})

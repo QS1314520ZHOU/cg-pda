@@ -329,4 +329,12 @@ public class OrderService  {
         return repository.findAll();
     }
 
+    /**
+     * 按小时窗口查询视图：record_time >= 当前时间 - N 小时
+     */
+    public List<IcuRecordView> getRecordsRecentHours(int hours) {
+        Date start = DateUtil.offsetHour(new Date(), -hours);
+        return repository.findByRecordTimeGreaterThanEqual(start);
+    }
+
 }

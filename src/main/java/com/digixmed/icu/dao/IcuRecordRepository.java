@@ -19,4 +19,17 @@ public interface IcuRecordRepository extends JpaRepository<IcuRecordView, String
      * 解析逻辑: Where recordTime >= ?1
      */
     List<IcuRecordView> findByRecordTimeGreaterThanEqual(Date startTime);
+
+    /**
+     * 视图是按状态的事件流水（同一 exeid 有 摆药/配药/执行/结束 等多行），
+     * 同步只取「执行」事件行：每个 exeid 恰好一行，record_time 即执行时刻
+     * 解析逻辑: Where status = ?1
+     */
+    List<IcuRecordView> findByStatus(String status);
+
+    /**
+     * 增量同步用：只取窗口内的「执行」事件行
+     * 解析逻辑: Where status = ?1 And recordTime >= ?2
+     */
+    List<IcuRecordView> findByStatusAndRecordTimeGreaterThanEqual(String status, Date startTime);
 }

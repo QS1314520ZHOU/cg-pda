@@ -69,17 +69,31 @@ public class OrderService  {
      */
     public Map<String, Integer> synOrderExecute() {
         Date start = DateUtil.offsetHour(new Date(), -this.orderExecuteLookbackHours);
-        List<IcuRecordView> records = repository.findByRecordTimeGreaterThanEqual(start);
+        // 视图是事件流水（同一 exeid 有摆药/配药/执行/结束等多行），只取「执行」事件行，
+        // 否则 Hibernate 按 exeid 折叠后留下的多为「摆药」首事件，会被状态过滤整体排掉
+        List<IcuRecordView> records = repository.findByStatusAndRecordTimeGreaterThanEqual(EXEC_STATUS, start);
         log.info("医嘱执行记录同步：回看 {} 小时，窗口 {} 至今", this.orderExecuteLookbackHours, start);
         return doSynOrderExecute(records);
     }
 
     /**
+     * 全量同步医嘱执行记录：不限时间窗口，取视图全部「执行」事件行（每个 exeid 恰好一行）
+     * 过滤/去重/按 exeId upsert 与增量同步一致，幂等可重复执行
+     */
+    public Map<String, Integer> synOrderExecuteAll() {
+        log.info("医嘱执行记录全量同步：视图 status=执行 全量");
+        return doSynOrderExecute(repository.findByStatus(EXEC_STATUS));
+    }
+
+    /**
      * 把金仓视图 vi_icu_hsz_yzzxjl 的执行记录同步到 DataCenter.VI_ICU_HSZ_YYZXJL
+     * 注意：视图是按状态的事件流水（同一 exeid 有 摆药/配药/执行/结束 等多行，各自有 record_time），
+     *       入参 records 必须已限定为 status=执行 的行（每个 exeid 恰好一行），
+     *       record_time 即执行时刻；否则 Hibernate 按 exeid 折叠首事件，数据会被状态过滤整体排掉
      * 字段映射：exeId=exeid、orderID=groupid、barCode=barcode、planTime=record_time、
      *          exeTime=record_time、status=status、speed=speed(#前数值)、nurseTrueName/nurseUserName=nurseusername、
      *          supplyCode=supply_code、supplyName=supply_name
-     * 排除 status 为 摆药/配药 的记录，以及 supplyName 为 检验 的记录（非医嘱执行数据）
+     * 排除 status 为 摆药/配药 的记录，以及 supplyName 为 检验 的记录（非医嘱执行数据；SQL 已限定执行，这里是兜底）
      * 单次用药去重：按 barcode 分组（PDA 执行的一组 barcode 一致），组内 supply_code 匹配
      *          SmartCare.configDrugMethod 的 code（、分隔多值），isOnce=true 的组只保留
      *          status=执行 的最早一条，无执行行整组跳过（跳过组打日志便于排查）
@@ -100,12 +114,36 @@ public class OrderService  {
             log.info("医嘱执行记录同步：视图无数据");
             return result;
         }
-        // 步骤1：过滤（排除摆药/配药 状态，以及 supplyName=检验 的记录）
-        List<IcuRecordView> postFilter = new ArrayList<>();
-        int excludeLab = 0;
+        // 步骤0：视图可能因关联产生 exeid 重复行。Hibernate 同一会话内同一 exeid 只保留一个实体实例，
+        // 重复行会折叠成同一引用，导致后面按引用去重失效、同一 exeId 被重复 upsert——先按 exeid 折叠为唯一行
+        List<IcuRecordView> distinctRecords = new ArrayList<>();
+        Map<String, IcuRecordView> byExeId = new LinkedHashMap<>();
+        int dupRows = 0;
         for (IcuRecordView record : records) {
-            String status = record.getStatus() == null ? null : record.getStatus().trim();
-            if (status != null && EXCLUDE_STATUS.contains(status)) {
+            String exeId = record.getExeid() == null ? null : record.getExeid().trim();
+            if (exeId == null || exeId.isEmpty()) {
+                distinctRecords.add(record);
+                continue;
+            }
+            if (byExeId.putIfAbsent(exeId, record) == null) {
+                distinctRecords.add(record);
+            } else {
+                dupRows++;
+            }
+        }
+        if (dupRows > 0) {
+            log.warn("医嘱执行记录同步：视图存在 exeid 重复行 {} 条（同一 exeid 多行，疑似视图关联放大），已折叠为唯一行", dupRows);
+        }
+        // 步骤1：过滤（SQL 已限定 status=执行；这里排除摆药/配药 及 supplyName=检验 作为兜底，并统计状态分布核对数据构成）
+        List<IcuRecordView> postFilter = new ArrayList<>();
+        Map<String, Integer> statusCount = new HashMap<>();
+        int excludeStatus = 0;
+        int excludeLab = 0;
+        for (IcuRecordView record : distinctRecords) {
+            String status = record.getStatus() == null ? "" : record.getStatus().trim();
+            statusCount.merge(status.isEmpty() ? "(空)" : status, 1, Integer::sum);
+            if (!status.isEmpty() && EXCLUDE_STATUS.contains(status)) {
+                excludeStatus++;
                 continue;
             }
             String supplyName = record.getSupplyName() == null ? null : record.getSupplyName().trim();
@@ -115,9 +153,9 @@ public class OrderService  {
             }
             postFilter.add(record);
         }
-        if (excludeLab > 0) {
-            log.info("医嘱执行记录同步：排除 supplyName=检验 的记录 {} 条", excludeLab);
-        }
+        // 按排除原因分组统计，便于核对视图数据构成（status 分布含被排除的行，基于 exeid 去重后的行数）
+        log.info("医嘱执行记录同步：视图共 {} 条（exeid 去重后 {} 条），排除 status=摆药/配药 {} 条、supplyName=检验 {} 条，状态过滤后 {} 条；状态分布：{}",
+                records.size(), distinctRecords.size(), excludeStatus, excludeLab, postFilter.size(), statusCount);
         result.put("filtered", postFilter.size());
         if (CollectionUtil.isEmpty(postFilter)) {
             log.info("医嘱执行记录同步：过滤后无数据，视图共 {} 条", records.size());
@@ -134,6 +172,7 @@ public class OrderService  {
         // 步骤3：按 barcode 分组做表单单次用药去重
         List<IcuRecordView> kept = dedupOnceGroups(postFilter, drugMethods, result);
         result.put("dedup", postFilter.size() - kept.size());
+        log.info("医嘱执行记录同步：去重后保留 {} 条（剔除 {} 条）", kept.size(), result.get("dedup"));
         if (CollectionUtil.isEmpty(kept)) {
             log.info("医嘱执行记录同步：去重后无数据，状态过滤后 {} 条", postFilter.size());
             return result;
@@ -239,13 +278,15 @@ public class OrderService  {
                 log.warn("医嘱执行去重：[执行行多条仅保留最早] barcode={}, groupid={}, 执行行 {} 条，保留 exeId={}（recordTime={}）",
                         barcode, firstGroupId(group), execRows.size(), chosen.getExeid(), chosen.getRecordTime());
             }
+            int removed = 0;
             for (IcuRecordView record : group) {
                 if (record != chosen) {
                     dropped.add(record);
+                    removed++;
                 }
             }
             log.info("医嘱执行去重：[保留] barcode={}, exeId={}，本组剔除 {} 行",
-                    barcode, chosen.getExeid(), group.size() - 1);
+                    barcode, chosen.getExeid(), removed);
         }
         List<IcuRecordView> kept = new ArrayList<>();
         for (IcuRecordView record : postFilter) {

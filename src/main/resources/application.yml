@@ -4,9 +4,9 @@ spring:
   data:
     mongodb:
       smartcare:
-        uri: mongodb://dxm:DB%40dmin@10.35.4.11:32121/SmartCare
+        uri: mongodb://dxm:DB%40dmin@10.35.4.12:32121/SmartCare
       datacenter:
-        uri: mongodb://data:Data%40dmin@10.35.4.11:32121/DataCenter
+        uri: mongodb://data:Data%40dmin@10.35.4.12:32121/DataCenter
       auto-index-creation: true
   datasource:
     url: jdbc:kingbase8://10.35.4.102:54321/ewell?currentSchema=np_nis_cqchonggang

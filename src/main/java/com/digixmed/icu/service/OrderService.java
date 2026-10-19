@@ -36,7 +36,7 @@ public class OrderService  {
     /** 视图中需要排除的给药途径名称（supply_name）：检验（非医嘱执行数据，不同步到 VI 表） */
     private static final Set<String> EXCLUDE_SUPPLY_NAMES = new HashSet<>(Arrays.asList("检验"));
 
-    /** 单次执行状态：表单单次用药（isOnce）的组只保留状态为"执行"的最早一条 */
+    /** 执行事件状态名：单次用药（isOnce）的组只保留状态为"执行"的最早一条 */
     private static final String EXEC_STATUS = "执行";
 
     /** 写入 VI_ICU_HSZ_YYZXJL 时的 _class，需与对端系统实体一致 */
@@ -65,38 +65,41 @@ public class OrderService  {
 
     /**
      * 同步医嘱执行记录：只取 record_time 在最近 N 小时（order-execute-lookback-hours，默认24）内的记录
+     * 同步范围按给药方式区分：持续用药除摆药/配药外全部事件行都同步；单次用药组内只留最早执行行
      * 按 exeId upsert：库里没有则新增，有则修改，可重复执行
      */
     public Map<String, Integer> synOrderExecute() {
         Date start = DateUtil.offsetHour(new Date(), -this.orderExecuteLookbackHours);
-        // 视图是事件流水（同一 exeid 有摆药/配药/执行/结束等多行），只取「执行」事件行，
-        // 否则 Hibernate 按 exeid 折叠后留下的多为「摆药」首事件，会被状态过滤整体排掉
-        List<IcuRecordView> records = repository.findByStatusAndRecordTimeGreaterThanEqual(EXEC_STATUS, start);
+        // 视图是事件流水（同一 exeid 有摆药/配药/执行/结束等多行，HIS 侧将改为每事件唯一 exeid），
+        // 取窗口内全部状态行，由 doSynOrderExecute 按给药方式决定保留范围
+        List<IcuRecordView> records = repository.findByRecordTimeGreaterThanEqual(start);
         log.info("医嘱执行记录同步：回看 {} 小时，窗口 {} 至今", this.orderExecuteLookbackHours, start);
         return doSynOrderExecute(records);
     }
 
     /**
-     * 全量同步医嘱执行记录：不限时间窗口，取视图全部「执行」事件行（每个 exeid 恰好一行）
+     * 全量同步医嘱执行记录：不限时间窗口，取视图全部状态行
      * 过滤/去重/按 exeId upsert 与增量同步一致，幂等可重复执行
      */
     public Map<String, Integer> synOrderExecuteAll() {
-        log.info("医嘱执行记录全量同步：视图 status=执行 全量");
-        return doSynOrderExecute(repository.findByStatus(EXEC_STATUS));
+        log.info("医嘱执行记录全量同步：视图全量（全部状态）");
+        return doSynOrderExecute(repository.findAll());
     }
 
     /**
      * 把金仓视图 vi_icu_hsz_yzzxjl 的执行记录同步到 DataCenter.VI_ICU_HSZ_YYZXJL
-     * 注意：视图是按状态的事件流水（同一 exeid 有 摆药/配药/执行/结束 等多行，各自有 record_time），
-     *       入参 records 必须已限定为 status=执行 的行（每个 exeid 恰好一行），
-     *       record_time 即执行时刻；否则 Hibernate 按 exeid 折叠首事件，数据会被状态过滤整体排掉
+     * 注意：视图是按状态的事件流水（同一 exeid 有 摆药/配药/执行/结束 等多行，各自有 record_time；
+     *       HIS 侧将改为每事件唯一 exeid），record_time 即该事件的发生时刻
+     * 同步范围按给药方式区分：
+     *       持续用药（configDrugMethod.isOnce != true 或匹配不到配置）：除摆药/配药外全部事件行
+     *       都同步（执行、结束等每个事件一条文档）
+     *       单次用药（isOnce = true）：按 barcode 分组（PDA 执行的一组 barcode 一致），组内
+     *          supply_code 匹配 configDrugMethod 的 code（、分隔多值），只保留 status=执行
+     *          的最早一条，无执行行整组跳过（跳过组打日志便于排查）
      * 字段映射：exeId=exeid、orderID=groupid、barCode=barcode、planTime=record_time、
      *          exeTime=record_time、status=status、speed=speed(#前数值)、nurseTrueName/nurseUserName=nurseusername、
      *          supplyCode=supply_code、supplyName=supply_name
-     * 排除 status 为 摆药/配药 的记录，以及 supplyName 为 检验 的记录（非医嘱执行数据；SQL 已限定执行，这里是兜底）
-     * 单次用药去重：按 barcode 分组（PDA 执行的一组 barcode 一致），组内 supply_code 匹配
-     *          SmartCare.configDrugMethod 的 code（、分隔多值），isOnce=true 的组只保留
-     *          status=执行 的最早一条，无执行行整组跳过（跳过组打日志便于排查）
+     * 排除 status 为 摆药/配药 的记录，以及 supplyName 为 检验 的记录（非医嘱执行数据）
      * 幂等：按 exeId upsert，视图里已同步过的老数据只会被更新，不会重复插入
      *
      * @return scan=视图扫描条数, filtered=状态过滤后条数, dedup=去重剔除条数,
@@ -114,8 +117,10 @@ public class OrderService  {
             log.info("医嘱执行记录同步：视图无数据");
             return result;
         }
-        // 步骤0：视图可能因关联产生 exeid 重复行。Hibernate 同一会话内同一 exeid 只保留一个实体实例，
-        // 重复行会折叠成同一引用，导致后面按引用去重失效、同一 exeId 被重复 upsert——先按 exeid 折叠为唯一行
+        // 步骤0：视图可能因关联产生 exeid 重复行（HIS 修好前同一 exeid 还会有多事件行）。
+        // Hibernate 同一会话内同一 exeid 只保留一个实体实例，重复行会折叠成同一引用，
+        // 导致后面按引用去重失效、同一 exeId 被重复 upsert——先按 exeid 折叠为唯一行。
+        // HIS 把 exeid 改为每事件唯一后，此步骤只兜视图关联放大，不会误折叠多事件
         List<IcuRecordView> distinctRecords = new ArrayList<>();
         Map<String, IcuRecordView> byExeId = new LinkedHashMap<>();
         int dupRows = 0;
@@ -134,7 +139,7 @@ public class OrderService  {
         if (dupRows > 0) {
             log.warn("医嘱执行记录同步：视图存在 exeid 重复行 {} 条（同一 exeid 多行，疑似视图关联放大），已折叠为唯一行", dupRows);
         }
-        // 步骤1：过滤（SQL 已限定 status=执行；这里排除摆药/配药 及 supplyName=检验 作为兜底，并统计状态分布核对数据构成）
+        // 步骤1：过滤（排除摆药/配药 及 supplyName=检验，并统计状态分布核对数据构成）
         List<IcuRecordView> postFilter = new ArrayList<>();
         Map<String, Integer> statusCount = new HashMap<>();
         int excludeStatus = 0;
@@ -211,8 +216,9 @@ public class OrderService  {
 
     /**
      * 按 barcode 分组做表单单次用药（isOnce）去重：
-     * - 供药码为空 / 匹配不到配置 / 配置 isOnce != true 的组：整组原样保留（与现状一致，不打日志）
-     * - isOnce 组：只保留 status=执行 的行；多条执行行保留 record_time 最早的一条并告警；
+     * - 供药码为空 / 匹配不到配置 / 配置 isOnce != true 的组（持续用药）：整组原样保留，
+     *   执行、结束等全部事件行都同步
+     * - isOnce 组（单次用药）：只保留 status=执行 的行；多条执行行保留 record_time 最早的一条并告警；
      *   整组无执行行则整组跳过并告警（方便排查）
      * - barcode 为空的行不参与分组（避免所有空值被并进同一个"空组"误删无关医嘱），按原样逐条保留并聚合告警
      *

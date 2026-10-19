@@ -40,13 +40,13 @@ public class ICUHanderController {
     }
 
     @GetMapping({"/synOrderExecute"})
-    @ApiOperation("同步医嘱执行记录（最近N小时）到DataCenter.VI_ICU_HSZ_YYZXJL，按 exeId upsert：没有新增，有则修改")
+    @ApiOperation("同步医嘱执行记录（最近N小时）到DataCenter.VI_ICU_HSZ_YYZXJL：持续用药除摆药/配药外全事件同步，单次用药组内仅留最早执行行；按 exeId upsert")
     public String synOrderExecute() {
         return formatSynResult(this.orderService.synOrderExecute());
     }
 
     @GetMapping({"/synOrderExecute/all"})
-    @ApiOperation("全量同步医嘱执行记录（不限时间窗口）到DataCenter.VI_ICU_HSZ_YYZXJL，按 exeId upsert，幂等可重复执行")
+    @ApiOperation("全量同步医嘱执行记录（不限时间窗口）到DataCenter.VI_ICU_HSZ_YYZXJL：持续用药除摆药/配药外全事件同步，单次用药组内仅留最早执行行；按 exeId upsert，幂等可重复执行")
     public String synOrderExecuteAll() {
         return formatSynResult(this.orderService.synOrderExecuteAll());
     }

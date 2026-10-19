@@ -20,7 +20,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * 单次用药（isOnce）按 barcode 去重逻辑的单元测试
- * 覆盖：code 多值匹配、取最早执行行、无执行行整组跳过、非 isOnce/空值组原样保留
+ * 覆盖：code 多值匹配、取最早执行行、无执行行整组跳过、
+ *       非 isOnce（持续用药）组执行+结束全保留、isOnce 组执行+结束只留执行、空值组原样保留
  */
 class OrderServiceDedupTest {
 
@@ -160,6 +161,32 @@ class OrderServiceDedupTest {
         Map<String, Integer> result = new HashMap<>();
         List<IcuRecordView> kept = orderService.dedupOnceGroups(input, configs, result);
         assertEquals(Arrays.asList("b1", "b2", "s1", "s2"), ids(kept));
+        assertEquals(0, result.getOrDefault("skippedGroups", 0));
+    }
+
+    @Test
+    void continuousGroup_execAndEndBothKept() {
+        // 持续用药（isOnce=false）：执行+结束 两行都保留，各事件一条文档
+        List<Document> configs = Collections.singletonList(config("124", false));
+        List<IcuRecordView> input = Arrays.asList(
+                row("c1", "BC7", "执行", "124", t(10)),
+                row("c2", "BC7", "结束", "124", t(20)));
+        Map<String, Integer> result = new HashMap<>();
+        List<IcuRecordView> kept = orderService.dedupOnceGroups(input, configs, result);
+        assertEquals(Arrays.asList("c1", "c2"), ids(kept));
+        assertEquals(0, result.getOrDefault("skippedGroups", 0));
+    }
+
+    @Test
+    void onceGroup_execAndEndKeepsOnlyExec() {
+        // 单次用药（isOnce=true）：组内有执行+结束时只留执行行
+        List<Document> configs = Collections.singletonList(config("104", true));
+        List<IcuRecordView> input = Arrays.asList(
+                row("o1", "BC8", "执行", "104", t(10)),
+                row("o2", "BC8", "结束", "104", t(20)));
+        Map<String, Integer> result = new HashMap<>();
+        List<IcuRecordView> kept = orderService.dedupOnceGroups(input, configs, result);
+        assertEquals(Collections.singletonList("o1"), ids(kept));
         assertEquals(0, result.getOrDefault("skippedGroups", 0));
     }
 
